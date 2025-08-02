@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  rethinkdb:
+    image: rethinkdb:latest
+    container_name: rethinkdb
+    hostname: rethinkdb  # Explicit hostname for consistent networking
+    ports:
+      - "8080:8080"    # Web admin interface
+      - "28015:28015"  # Driver port
+    volumes:
+      - rethinkdb_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend
+    hostname: backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      - DB_HOST=rethinkdb
+      - DB_PORT=28015
+      - DB_NAME=sensors
+      - NODE_ENV=development
+    depends_on:
+      rethinkdb:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "8088:8080"  # Changed to standard format (host:container)
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+    name: ksensors-network  # Explicit network name
+
+volumes:
+  rethinkdb_data:
+    name: ksensors-rethinkdb-data

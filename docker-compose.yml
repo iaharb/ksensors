@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      - rethinkdb
+    environment:
+      - DB_HOST=rethinkdb
+      - DB_PORT=28015
+    ports:
+      - "3001:3001"
+    networks:
+      - ksensors-network
+
+  rethinkdb:
+    image: rethinkdb:latest
+    container_name: ksensors-rethinkdb
+    hostname: rethinkdb
+    ports:
+      - "8080:8080"
+      - "28015:28015"
+      - "28015:28015/udp"
+    volumes:
+      - rethinkdb_data:/data
+    networks:
+      - ksensors-network
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ksensors-frontend
+    ports:
+      - "8088:8088"
+    environment:
+      - BACKEND_URL=http://backend:3000
+    depends_on:
+      - backend
+    networks:
+      - ksensors-network
+    restart: unless-stopped
+    volumes:
+    - ./frontend:/app
+    - /app/node_modules
+
+networks:
+  ksensors-network:
+    driver: bridge
+
+volumes:
+  rethinkdb_data:

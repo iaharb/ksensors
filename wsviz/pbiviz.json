@@ -1,0 +1,27 @@
+{
+  "visual": {
+    "name": "sensorRealtimeVisual",
+    "displayName": "Sensor Realtime Visual",
+    "guid": "sensorRealtimeVisualABC123",
+    "visualClassName": "Visual",
+    "version": "1.0.0.0",
+    "description": "Real-time sensor data via WebSocket",
+    "supportUrl": "https://yourdomain.com/support",
+    "gitHubUrl": "https://github.com/yourrepo/sensor-visual"
+  },
+  "apiVersion": "5.3.0",
+  "author": {
+    "name": "Your Name",
+    "email": "your@email.com"
+  },
+  "assets": {
+    "icon": "assets/icon.png"
+  },
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "websocket": "^1.0.34"
+  }
+}

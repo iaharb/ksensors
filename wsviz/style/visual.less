@@ -1,0 +1,37 @@
+p {
+    font-size: 20px;
+    font-weight: bold;
+    em {
+        background: yellow;
+        padding: 5px;
+        
+    }
+}
+.sensor-container {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  padding: 10px;
+  overflow-y: auto;
+  height: 100%;
+
+  .sensor-item {
+    background: #f5f5f5;
+    border-radius: 4px;
+    padding: 8px;
+    margin-bottom: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+
+    .sensor-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #0078d4;
+    }
+
+    .sensor-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+  }
+}

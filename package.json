@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@faker-js/faker": "^8.1.0",
+    "dotenv": "^17.2.0",
+    "rethinkdb": "^2.4.2"
+  }
+}

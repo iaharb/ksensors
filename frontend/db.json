@@ -1,0 +1,46 @@
+{
+  "buildings": [
+    {
+      "building_id": "B001",
+      "type": "public",
+      "governorate": "Capital",
+      "district": "Kuwait City",
+      "street_address": "123 Main Street",
+      "location": {
+        "lat": 29.3759,
+        "long": 47.9774
+      }
+    }
+  ],
+  "sensors": [
+    {
+      "sensor_id": "S001",
+      "building_id": "B001",
+      "type": "temperature",
+      "status": "active",
+      "installation_date": "2023-01-15T00:00:00Z",
+      "warranty_years": 3
+    }
+  ],
+  "contacts": [
+    {
+      "contact_id": "C001",
+      "building_id": "B001",
+      "full_name": "John Doe",
+      "role": "manager",
+      "phone": "123456789",
+      "email": "john@example.com",
+      "workshift": "day"
+    }
+  ],
+  "readings": [
+    {
+      "reading_id": "R001",
+      "sensor_id": "S001",
+      "building_id": "B001",
+      "value": 24.5,
+      "unit": "°C",
+      "timestamp": "2023-06-01T12:00:00Z"
+    }
+  ]
+}

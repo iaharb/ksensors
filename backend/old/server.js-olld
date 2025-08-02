@@ -1,0 +1,354 @@
+const express = require('express');
+const r = require('rethinkdb');
+const cors = require('cors');
+const WebSocket = require('ws');
+const app = express();
+
+// Configuration
+const HTTP_PORT = process.env.HTTP_PORT || 3000;
+const WS_PORT = process.env.WS_PORT || 8090;
+const DB_HOST = process.env.DB_HOST || 'rethinkdb';
+const DB_PORT = process.env.DB_PORT || 28015;
+const DB_NAME = 'sensors';
+const WS_AUTH_TOKEN = process.env.WS_AUTH_TOKEN || 'secure-token';
+
+// Sensor constants
+const SENSOR_TYPES = ['temperature', 'humidity', 'fire_alarm', 'co2', 'pressure', 'water_leak'];
+const UNITS = {
+  temperature: '°C',
+  humidity: '%',
+  fire_alarm: 'boolean',
+  co2: 'ppm',
+  pressure: 'kPa',
+  water_leak: 'boolean'
+};
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Enhanced logging
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+// ================= WEB SOCKET SERVER =================
+const wss = new WebSocket.Server({ port: WS_PORT });
+
+wss.on('connection', (ws, req) => {
+  // Authentication for WebSocket connections
+  const token = req.url.split('token=')[1];
+  if (token !== WS_AUTH_TOKEN) {
+    ws.close(1008, 'Unauthorized');
+    return;
+  }
+
+  console.log('New Power BI client connected');
+  
+  // Send initial data snapshot on connection
+  sendInitialData(ws);
+  
+  ws.on('close', () => {
+    console.log('Power BI client disconnected');
+  });
+});
+
+async function sendInitialData(ws) {
+  try {
+    const [buildings, sensors, readings] = await Promise.all([
+      r.db(DB_NAME).table('buildings').run(conn).then(cursor => cursor.toArray()),
+      r.db(DB_NAME).table('sensors').run(conn).then(cursor => cursor.toArray()),
+      r.db(DB_NAME).table('readings').orderBy(r.desc('timestamp')).limit(1000).run(conn).then(cursor => cursor.toArray())
+    ]);
+    
+    ws.send(JSON.stringify({
+      type: 'INITIAL_DATA',
+      buildings,
+      sensors,
+      readings
+    }));
+  } catch (err) {
+    console.error('Error sending initial data:', err);
+  }
+}
+
+function broadcastData(type, data) {
+  const message = JSON.stringify({ type, data });
+  
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
+let conn = null;
+const activeTables = ['buildings', 'sensors', 'contacts', 'readings'];
+
+// Database connection
+async function connectDB() {
+  const maxRetries = 5;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const connection = await r.connect({ 
+        host: DB_HOST, 
+        port: DB_PORT,
+        db: DB_NAME
+      });
+      connection.on('error', (err) => {
+        console.error('Connection error:', err);
+        conn = null;
+      });
+      console.log('✅ Connected to RethinkDB');
+      return connection;
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
+    }
+  }
+}
+
+// Initialize changefeeds for all tables
+async function setupChangefeeds() {
+  console.log('Initializing changefeeds for:', activeTables.join(', '));
+  
+  activeTables.forEach(table => {
+    r.db(DB_NAME).table(table).changes().run(conn)
+      .then(cursor => {
+        console.log(`Changefeed established for ${table}`);
+        
+        cursor.each((err, change) => {
+          if (err) {
+            console.error(`${table} changefeed error:`, err);
+            return;
+          }
+        // Broadcast changes to WebSocket clients
+          broadcastData(table.toUpperCase() + '_CHANGE', change);
+           
+          console.log(`${table} change detected:`, change);
+          // Here you could add other notification mechanisms
+          // like emitting events or calling external services
+        });
+      })
+      .catch(err => {
+        console.error(`Failed to setup ${table} changefeed:`, err);
+      });
+  });
+}
+
+// Database initialization
+async function initDatabase() {
+  try {
+    const dbList = await r.dbList().run(conn);
+    if (!dbList.includes(DB_NAME)) {
+      await r.dbCreate(DB_NAME).run(conn);
+      console.log(`Created database '${DB_NAME}'`);
+    }
+
+    const tables = {
+      buildings: 'building_id',
+      sensors: 'sensor_id',
+      contacts: 'contact_id',
+      readings: 'reading_id'
+    };
+
+    const existingTables = await r.db(DB_NAME).tableList().run(conn);
+    for (const [table, primaryKey] of Object.entries(tables)) {
+      if (!existingTables.includes(table)) {
+        await r.db(DB_NAME).tableCreate(table, { primaryKey }).run(conn);
+        console.log(`Created table '${table}'`);
+      }
+    }
+
+    const indexes = {
+      buildings: ['governorate', 'district', 'type'],
+      sensors: ['building_id', 'type', 'installation_date'],
+      contacts: ['building_id', 'role'],
+      readings: ['sensor_id', 'timestamp', 'building_id']
+    };
+
+    for (const [table, tableIndexes] of Object.entries(indexes)) {
+      const existingIndexes = await r.db(DB_NAME).table(table).indexList().run(conn);
+      for (const index of tableIndexes) {
+        if (!existingIndexes.includes(index)) {
+          await r.db(DB_NAME).table(table).indexCreate(index).run(conn);
+          await r.db(DB_NAME).table(table).indexWait(index).run(conn);
+          console.log(`Created index ${table}.${index}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Database init failed:', err);
+    throw err;
+  }
+}
+
+// ================= API ENDPOINTS =================
+app.get('/health', (req, res) => {
+  res.json({
+    status: conn && conn.open ? 'healthy' : 'unhealthy',
+    db: DB_NAME,
+    tables: activeTables
+  });
+});
+
+// Buildings endpoints
+app.get('/buildings', async (req, res) => {
+  try {
+    const { page = 1, limit = 1000, all = false } = req.query;
+    let query = r.db(DB_NAME).table('buildings');
+    
+    if (all === 'true') {
+      const cursor = await query.run(conn);
+      res.json(await cursor.toArray());
+    } else {
+      const cursor = await query
+        .skip((page - 1) * limit)
+        .limit(Number(limit))
+        .run(conn);
+      res.json(await cursor.toArray());
+    }
+  } catch (err) {
+    console.error('Failed to fetch buildings:', err);
+    res.status(500).json({ error: 'Failed to fetch buildings' });
+  }
+});
+
+app.post('/buildings', async (req, res) => {
+  try {
+    const result = await r.db(DB_NAME).table('buildings').insert({
+      building_id: 'bld-' + r.uuid(),
+      ...req.body,
+      created_at: r.now()
+    }).run(conn);
+    
+    console.log('Insert result:', result);
+
+    res.json({
+      success: true,
+      id: result.generated_keys[0],
+      message: 'Building created successfully'
+    });
+  } catch (err) {
+    console.log('Insert result:', result);
+    console.error('Failed to create building:', err);
+    res.status(500).json({ error: 'Failed to create building' });
+  }
+});
+
+// Sensors endpoints
+app.get('/sensors', async (req, res) => {
+  try {
+    const { page = 1, limit = 1000, building_id, all = false } = req.query;
+    let query = r.db(DB_NAME).table('sensors');
+    
+    if (building_id) query = query.getAll(building_id, { index: 'building_id' });
+    
+    if (all === 'true') {
+      const cursor = await query.run(conn);
+      res.json(await cursor.toArray());
+    } else {
+      const cursor = await query
+        .skip((page - 1) * limit)
+        .limit(Number(limit))
+        .run(conn);
+      res.json(await cursor.toArray());
+    }
+  } catch (err) {
+    console.error('Failed to fetch sensors:', err);
+    res.status(500).json({ error: 'Failed to fetch sensors' });
+  }
+});
+
+// Contacts endpoints
+app.get('/contacts', async (req, res) => {
+  try {
+    const { page = 1, limit = 1000, building_id, role, all = false } = req.query;
+    let query = r.db(DB_NAME).table('contacts');
+    
+    if (building_id) query = query.getAll(building_id, { index: 'building_id' });
+    if (role) query = query.getAll(role, { index: 'role' });
+    
+    if (all === 'true') {
+      const cursor = await query.run(conn);
+      res.json(await cursor.toArray());
+    } else {
+      const cursor = await query
+        .skip((page - 1) * limit)
+        .limit(Number(limit))
+        .run(conn);
+      res.json(await cursor.toArray());
+    }
+  } catch (err) {
+    console.error('Failed to fetch contacts:', err);
+    res.status(500).json({ error: 'Failed to fetch contacts' });
+  }
+});
+
+// Readings endpoints
+app.get('/readings', async (req, res) => {
+  try {
+    const { sensor_type, limit = 5000, all = false } = req.query;
+    let query = r.db(DB_NAME).table('readings');
+    
+    if (sensor_type) {
+      const sensors = await r.db(DB_NAME)
+        .table('sensors')
+        .getAll(sensor_type, { index: 'type' })('sensor_id')
+        .run(conn);
+      query = query.getAll(r.args(await sensors.toArray()), { index: 'sensor_id' });
+    }
+    
+    if (all === 'true') {
+      const cursor = await query.orderBy(r.desc('timestamp')).run(conn);
+      res.json(await cursor.toArray());
+    } else {
+      const cursor = await query
+        .limit(Number(limit))
+        .orderBy(r.desc('timestamp'))
+        .run(conn);
+      res.json(await cursor.toArray());
+    }
+  } catch (err) {
+    console.error('Failed to fetch readings:', err);
+    res.status(500).json({ error: 'Failed to fetch readings' });
+  }
+});
+
+// Start server
+async function startServer() {
+  try {
+    conn = await connectDB();
+    await initDatabase();
+    await setupChangefeeds();
+    
+    app.listen(HTTP_PORT, () => {
+      console.log(`🚀 HTTP Server running on port ${HTTP_PORT}`);
+      console.log(`📡 WebSocket Server running on port ${WS_PORT}`);
+      console.log('\n➡️  Try these endpoints:');
+      console.log(`     - GET /health`);
+      console.log(`     - GET /buildings`);
+      console.log(`     - POST /buildings`);
+      console.log(`     - GET /sensors`);
+      console.log(`\n➡️  WebSocket URL for Power BI: ws://yourserver:${WS_PORT}?token=${WS_AUTH_TOKEN}`);
+    });
+
+  } catch (err) {
+    console.error('❌ Server startup failed:', err);
+    process.exit(1);
+  }
+}
+
+// Cleanup on exit
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+function gracefulShutdown() {
+  console.log('\nShutting down gracefully...');
+  if (conn) conn.close();
+  wss.close();
+  process.exit(0);
+}
+
+startServer();

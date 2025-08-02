@@ -1,0 +1,35 @@
+{
+  "dataRoles": [
+    {
+      "name": "staticData",
+      "kind": "Grouping",
+      "displayName": "Static Data (Optional)",
+      "description": "You can optionally bind static data from your dataset"
+    }
+  ],
+  "dataViewMappings": [
+    {
+      "conditions": [],
+      "categorical": {
+        "categories": {
+          "for": { "in": "staticData" }
+        }
+      }
+    }
+  ],
+  "objects": {
+    "websocketSettings": {
+      "displayName": "WebSocket Settings",
+      "properties": {
+        "websocketUrl": {
+          "displayName": "WebSocket URL",
+          "type": { "text": true }
+        },
+        "maxDataPoints": {
+          "displayName": "Max Data Points",
+          "type": { "numeric": true }
+        }
+      }
+    }
+  }
+}
