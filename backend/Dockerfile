@@ -1,22 +1,17 @@
-FROM node:18
+FROM node:20-alpine
 
 WORKDIR /app
 
 # Copy package files first for better caching
 COPY package*.json ./
-COPY scripts/ ./scripts/
-COPY backend/ ./
 
 # Install dependencies
-RUN npm install
-
+RUN npm cache clean --force && \
+    npm install --legacy-peer-deps
+    
 # Copy the rest of the application
 COPY . .
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD curl -f http://localhost:3000/health || exit 1
+EXPOSE 3001
 
-EXPOSE 3000
-
-CMD ["node", "server.js"]
+CMD ["npm", "start"]

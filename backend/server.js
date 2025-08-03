@@ -1,104 +1,143 @@
-// server/server.js
-const express = require('express');
-const r = require('rethinkdb');
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import initDB from './db/init.js';
+import r from './db/connection.js';  // Connection pool instance
+
+// Load environment variables
+dotenv.config();
+
+// Create Express app
 const app = express();
-const routes = require('./routes');
+// const PORT = process.env.API_PORT || 3001;
 
-require('dotenv').config();
-const app = require('./app.js');
-const DataGenerator = require('./scripts/dataGenerator');
-const { setupDatabase } = require('./db');
+// Middleware
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json());
 
-const PORT = process.env.PORT || 3001;
-const AUTO_START_GENERATION = process.env.AUTO_START_GENERATION === 'true';
-const GENERATE_HISTORICAL = process.env.GENERATE_HISTORICAL === 'true';
-
-// Database connection middleware
-app.use(async (req, res, next) => {
+// Database initialization wrapper
+async function startServer() {
   try {
-    const conn = await r.connect({
-      host: process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 28015,
-      db: process.env.DB_NAME || 'sensors'
-    });
-    req.dbConn = conn;
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
+    // Get port from environment variables
+    const PORT = process.env.API_PORT || 3001;
 
-// Use routes
-app.use('/api', routes);  // Now all routes are under /api (e.g., /api/sensors)
-
-// Error handler
-app.use((err, req, res, next) => {
-  res.status(500).json({ error: err.message });
-});
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
-class Server {
-  constructor() { 
-    this.dataGenerator = new DataGenerator();
-    this.server = null;
-  }
-
-  async start() {
-    try {
-      console.log('Initializing database...');
-      await setupDatabase();
-
-      // Attach data generator to app for route access
-      app.set('dataGenerator', this.dataGenerator);
-
-      if (AUTO_START_GENERATION) {
-        console.log('Starting data generation...');
-        await this.dataGenerator.initialize(GENERATE_HISTORICAL);
-      }
-
-      this.server = app.listen(PORT, () => {
-        console.log(`Server running on port ${PORT}`);
-        console.log(`Data generation: ${AUTO_START_GENERATION ? 'ON' : 'OFF'}`);
-        if (AUTO_START_GENERATION) {
-          console.log(`Historical data: ${GENERATE_HISTORICAL ? 'GENERATED' : 'SKIPPED'}`);
+    // Initialize database (create tables if needed)
+    await initDB();
+    
+    // ================== CRUD Routes ================== //
+    
+    // Generic CRUD handler factory
+    const createCRUDRoutes = (tableName) => {
+      const router = express.Router();
+      
+      // GET all items
+      router.get('/', async (req, res) => {
+        try {
+          const items = await r.table(tableName).run();
+          res.json(items);
+        } catch (err) {
+          res.status(500).json({ error: err.message });
         }
       });
+      
+      // GET single item
+      router.get('/:id', async (req, res) => {
+        try {
+          const item = await r.table(tableName).get(req.params.id).run();
+          item ? res.json(item) : res.status(404).json({ error: 'Not found' });
+        } catch (err) {
+          res.status(500).json({ error: err.message });
+        }
+      });
+      
+      // POST create item
+      router.post('/', async (req, res) => {
+        try {
+          const result = await r.table(tableName).insert(req.body).run();
+          res.status(201).json({
+            id: result.generated_keys?.[0],
+            message: 'Created successfully'
+          });
+        } catch (err) {
+          res.status(400).json({ error: err.message });
+        }
+      });
+      
+      // PUT update item
+      router.put('/:id', async (req, res) => {
+        try {
+          const result = await r.table(tableName)
+            .get(req.params.id)
+            .update(req.body)
+            .run();
+            
+          result.replaced === 1
+            ? res.json({ message: 'Updated successfully' })
+            : res.status(404).json({ error: 'Not found' });
+        } catch (err) {
+          res.status(400).json({ error: err.message });
+        }
+      });
+      
+      // DELETE item
+      router.delete('/:id', async (req, res) => {
+        try {
+          const result = await r.table(tableName)
+            .get(req.params.id)
+            .delete()
+            .run();
+            
+          result.deleted === 1
+            ? res.json({ message: 'Deleted successfully' })
+            : res.status(404).json({ error: 'Not found' });
+        } catch (err) {
+          res.status(500).json({ error: err.message });
+        }
+      });
+      
+      return router;
+    };
 
-      this.setupGracefulShutdown();
-    } catch (err) {
-      console.error('Server startup failed:', err);
-      process.exit(1);
-    }
-  }
+    // Register CRUD routes
+    app.use('/api/sensors', createCRUDRoutes('sensors'));
+    app.use('/api/buildings', createCRUDRoutes('buildings'));
+    app.use('/api/contacts', createCRUDRoutes('contacts'));
+    app.use('/api/readings', createCRUDRoutes('readings'));
 
-  setupGracefulShutdown() {
-    process.on('SIGINT', () => this.shutdown());
-    process.on('SIGTERM', () => this.shutdown());
-  }
-
-  async shutdown() {
-    console.log('\nShutting down server...');
-    
-    try {
-      await this.dataGenerator.disconnect();
-      if (this.server) {
-        this.server.close(() => {
-          console.log('Server closed');
-          process.exit(0);
-        });
-      } else {
-        process.exit(0);
+    // ============== PowerBI Endpoint ================ //
+    app.get('/api/powerbi/sensors', async (req, res) => {
+      try {
+        const sensors = await r.table('sensors').run();
+        res.json(sensors);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
       }
-    } catch (err) {
-      console.error('Shutdown error:', err);
-      process.exit(1);
-    }
+    });
+
+    // ============== Health Check ==================== //
+    app.get('/health', (req, res) => {
+      res.status(200).json({
+        status: 'UP',
+        database: r.getPoolMaster().getPools().length > 0 ? 'CONNECTED' : 'DISCONNECTED'
+      });
+    });
+
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📊 PowerBI endpoint: http://localhost:${PORT}/api/powerbi/sensors`);
+      console.log(`🩺 Health check: http://localhost:${PORT}/health`);
+    });
+
+  } catch (err) {
+    console.error('❌ Server startup failed:', err);
+    process.exit(1);
   }
 }
 
-// Start the server
-new Server().start();
+// Start the application
+startServer();

@@ -1,15 +1,16 @@
-FROM node:18-alpine
-# Set working directory
-WORKDIR /app
-# Copy package files first for better caching
-COPY package*.json ./
-# Install dependencies
-RUN npm install --include=dev
-RUN npm install -g nodemon
+FROM node:20-alpine
 
-# Copy the rest of the application
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
 COPY . .
-# Expose port
-EXPOSE 8088
-# Start the server
-CMD ["nodemon", "server.js"]
+
+# Set environment variables
+ENV FRONTEND_PORT=3000
+ENV REACT_APP_API_URL=http://backend:3001
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
