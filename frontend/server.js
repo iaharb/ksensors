@@ -12,15 +12,15 @@ const port = process.env.FRONTEND_PORT || 3000;
 
 // Content Security Policy Middleware
 app.use((req, res, next) => {
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
-    "font-src 'self' data:; " +
-    "img-src 'self' data:; " +
-    "connect-src 'self' http://localhost:3001 http://backend:3001;"
-  );
+res.setHeader(
+  'Content-Security-Policy',
+  "default-src 'self'; " +
+  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+  "font-src 'self' data: https://cdn.jsdelivr.net;" + // Added CDN
+  "img-src 'self' data:; " +
+  "connect-src 'self' http://localhost:3001 http://backend:3001;"
+);
   next();
 });
 
